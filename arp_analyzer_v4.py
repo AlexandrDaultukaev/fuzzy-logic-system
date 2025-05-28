@@ -34,6 +34,12 @@ class ARPSpoofingDetector:
         
         self.control_system = ctrl.ControlSystem(self.rules)
         self.simulation = ctrl.ControlSystemSimulation(self.control_system)
+        
+        # self.threat_level.view_user()
+        # plt.ylabel('Величина принадлежности')
+        # plt.xlabel('Уровень угрозы')
+        # plt.title('Ф. п. для терма "уровень угрозы"')
+        # plt.show()
 
     def _setup_membership(self):
         # ARP Responses
@@ -218,6 +224,9 @@ class ARPSpoofingDetector:
             # Вычисляем метрики
             metrics = self._calculate_metrics(stats, ip_conflicts, mac_change_count)
             threat = self._evaluate_threat(metrics)
+            print('\n------------------------------------\n')
+            # self.threat_level.view(sim=self.simulation)
+            # plt.plot()
             print(f'THREAT: {threat}')
             results.append({
                 'mac': mac,
@@ -268,8 +277,31 @@ class ARPSpoofingDetector:
             
             self.simulation.compute()
             threat = self.simulation.output['threat_level']
-            # self.threat_level.view_user(sim=self.simulation)
-            # plt.show()
+            self.arp_responses.view_user(sim=self.simulation)
+            plt.ylabel('Величина принадлежности')
+            plt.xlabel('Количество arp-ответов')
+            plt.title('Оценка для терма "количество arp-ответов"')
+            plt.show()
+            self.mac_changes.view_user(sim=self.simulation)
+            plt.ylabel('Величина принадлежности')
+            plt.xlabel('количество изменений mac')
+            plt.title('Оценка для терма "количество изменений mac"')
+            plt.show()
+            self.unsolicited_score.view_user(sim=self.simulation)
+            plt.ylabel('Величина принадлежности')
+            plt.xlabel('количество незапрошенных ответов')
+            plt.title('Оценка для терма "количество незапрошенных ответов"')
+            plt.show()
+            self.ip_conflicts.view_user(sim=self.simulation)
+            plt.ylabel('Величина принадлежности')
+            plt.xlabel('количество конфликтующих ip')
+            plt.title('Оценка для терма "количество конфликтующих ip"')
+            plt.show()
+            self.threat_level.view_user(sim=self.simulation)
+            plt.ylabel('Величина принадлежности')
+            plt.xlabel('Уровень угрозы')
+            plt.title('Оценка для терма "уровень угрозы"')
+            plt.show()
             
             # Дополнительные корректировки
             if metrics['is_gateway']:
@@ -304,6 +336,62 @@ class ARPSpoofingDetector:
         ARPSpoofingDetector.idx += 1
         
         return path
+    
+    def lightweight_arp_spoofing_check(self, cap_fd, 
+                            max_arp_packets=1000, 
+                            max_unique_mac_ip_pairs=50, 
+                            max_conflicts=3, 
+                            sample_size=500):
+        try:
+            cap = pyshark.FileCapture(
+                input_file=cap_fd,
+                display_filter='arp',
+                only_summaries=True,  # Быстрее, так как не загружаем полные пакеты
+                keep_packets=False    # Не хранить пакеты в памяти для экономии
+            )
+            
+            ip_to_mac = defaultdict(set)
+            unique_pairs = set()
+            arp_count = 0
+            conflicts_detected = 0
+            
+            for pkt in cap:
+                if not hasattr(pkt, 'arp') or not hasattr(pkt, 'eth'):
+                    continue
+                    
+                arp_count += 1
+                
+                src_ip = pkt.arp.src_proto_ipv4
+                src_mac = pkt.eth.src
+                
+                # Проверяем конфликты MAC-IP
+                if src_ip in ip_to_mac:
+                    if src_mac not in ip_to_mac[src_ip]:
+                        conflicts_detected += 1
+                        if conflicts_detected >= max_conflicts:
+                            cap.close()
+                            return True
+                else:
+                    ip_to_mac[src_ip].add(src_mac)
+                
+                # Отслеживаем уникальные пары MAC-IP
+                unique_pairs.add((src_mac, src_ip))
+                if len(unique_pairs) > max_unique_mac_ip_pairs:
+                    cap.close()
+                    return True
+                
+                # Досрочное прерывание если достигли лимита
+                if arp_count >= max_arp_packets or arp_count >= sample_size:
+                    break
+                    
+            cap.close()
+            
+            # Если обнаружено хотя бы несколько конфликтов
+            return conflicts_detected >= 1
+            
+        except Exception as e:
+            print(f"Error analyzing pcap: {e}")
+            return False
 
 
 if __name__ == "__main__":
@@ -312,7 +400,9 @@ if __name__ == "__main__":
     # Пример 1: Анализ PCAP файла
     if DEBUG:
         print("[*] Analyzing pcap file...")
-        cap = pyshark.FileCapture("/home/alex/Coding/FuzzySystem/pcaps/arp-spoof/normal.pcapng", display_filter="arp")
+        # /home/alex/Coding/FuzzySystem/pcaps/arp-spoofing.pcapng
+        cap = pyshark.FileCapture("/home/alex/Coding/FuzzySystem/pcaps/arp-spoofing.pcapng", display_filter="arp")
+        # cap = pyshark.FileCapture("/home/alex/Coding/FuzzySystem/pcaps/arp-spoof/normal.pcapng", display_filter="arp")
         results = detector.analyze_cap(cap)[2]
         
         print("\nTop 5 potential threats:")

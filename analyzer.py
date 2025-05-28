@@ -117,24 +117,25 @@ class Analyzer:
     # 2. Передавай pcap_path, вместо cap_fd
     # 3. Измени _wait_for_futures
     def analyze(self):
-        
         futures = []
         self.cap_fd = self.cap_manager.get_first_cap()
         
         need_scan = self.port_scan.check_for_scan(self.cap_fd)
-        need_arp = True # Заглушка
-        need_dns = True # Заглушка
+        need_arp = self.arp_scan.lightweight_arp_spoofing_check(self.cap_manager.get_current_cap_path())
+        # cap = pyshark.FileCapture("/home/alex/Coding/FuzzySystem/pcaps/dns/solo_dns.pcapng")
+        need_dns = self.dns_tun.lightweight_dns_tunnel_check(cap)
+        print(f"NEED_DNS: {need_dns}")
 
         if need_scan:
             cap = pyshark.FileCapture(self.cap_manager.get_current_cap_path(), keep_packets=False, display_filter=PortScan.get_filter())
             futures.append(self.thread_pool.submit_task(PortScan().analyze_cap, cap))
         
         if need_arp:
-            cap = pyshark.FileCapture("/home/alex/Coding/FuzzySystem/pcaps/arp-spoof/victim_pc.pcapng", display_filter="arp")
+            cap = pyshark.FileCapture(self.cap_manager.get_current_cap_path(), display_filter="arp")
             futures.append(self.thread_pool.submit_task(ARPSpoofingDetector().analyze_cap, cap))
             
         if need_dns:
-            cap = pyshark.FileCapture("/home/alex/Coding/FuzzySystem/pcaps/dns-tunnel-iodine.pcap", display_filter='dns && dns.flags.response==0 && ip')
+            cap = pyshark.FileCapture(self.cap_manager.get_current_cap_path(), display_filter='dns && dns.flags.response==0 && ip')
             futures.append(self.thread_pool.submit_task(DNSTunnelDetector().analyze_cap, cap))
             
         
