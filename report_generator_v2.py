@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 from jinja2 import Template
-from INFO import *
+from CONFIG_INFO import *
 
 class ReportGenerator():
     
@@ -322,7 +322,7 @@ class ReportGenerator():
         )
 
         # Сохранение отчета
-        path_report = f"/home/alex/Coding/FuzzySystem/reports/dns_tunnel_report_{ReportGenerator.idx}.html"
+        path_report = f"{REPORT_DIR}dns_tunnel_report_{ReportGenerator.idx}.html"
         with open(path_report, "w", encoding="utf-8") as f:
             f.write(html_report)
         

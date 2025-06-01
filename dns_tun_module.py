@@ -17,8 +17,9 @@ import time
 from os.path import isfile, join
 from os import walk
 from os import listdir
-from INFO import *
+from CONFIG_INFO import *
 
+DEFAULT_FILTER = "dns && dns.flags.response==0 && ip"
 
 class DNSTunnelDetector:
     
@@ -28,11 +29,11 @@ class DNSTunnelDetector:
         # Метрики для каждого IP
         self.advanced=advanced
         self.metrics = {
-            'avg_domain_len': ctrl.Antecedent(np.arange(0, 100, 1), 'avg_domain_len'),
-            'subdomain_entropy': ctrl.Antecedent(np.arange(0, 6, 0.1), 'subdomain_entropy'),
-            'query_frequency': ctrl.Antecedent(np.arange(0, 500, 10), 'query_frequency'),
-            'unique_subdomains': ctrl.Antecedent(np.arange(0, 500, 10), 'unique_subdomains'),
-            'digits': ctrl.Antecedent(np.arange(0, 10, 1), 'digits'),
+            'avg_domain_len': ctrl.Antecedent(np.arange(-1, 100, 1), 'avg_domain_len'),
+            'subdomain_entropy': ctrl.Antecedent(np.arange(-0.1, 6, 0.1), 'subdomain_entropy'),
+            'query_frequency': ctrl.Antecedent(np.arange(-10, 500, 10), 'query_frequency'),
+            'unique_subdomains': ctrl.Antecedent(np.arange(-10, 500, 10), 'unique_subdomains'),
+            'digits': ctrl.Antecedent(np.arange(-1, 10, 1), 'digits'),
             
         }
         
@@ -62,7 +63,11 @@ class DNSTunnelDetector:
         })
         self.whitelist = self._load_whitelist()
         
+        print('[DNSTunnelDetector] is inited successfully')
         
+    @staticmethod
+    def get_filter():
+        return DEFAULT_FILTER
 
     def _load_whitelist(self):
         return {
@@ -73,23 +78,23 @@ class DNSTunnelDetector:
 
     def _setup_membership(self):
         # Настройка функций принадлежности для каждой метрики
-        self.metrics['avg_domain_len']['short'] = fuzz.trimf(self.metrics['avg_domain_len'].universe, [0, 15, 30])
+        self.metrics['avg_domain_len']['short'] = fuzz.trimf(self.metrics['avg_domain_len'].universe, [-1, 15, 30])
         self.metrics['avg_domain_len']['medium'] = fuzz.trimf(self.metrics['avg_domain_len'].universe, [25, 45, 65])
         self.metrics['avg_domain_len']['long'] = fuzz.trapmf(self.metrics['avg_domain_len'].universe, [55, 70, 100, 100])
 
-        self.metrics['subdomain_entropy']['low'] = fuzz.trimf(self.metrics['subdomain_entropy'].universe, [0, 1, 2.5])
+        self.metrics['subdomain_entropy']['low'] = fuzz.trimf(self.metrics['subdomain_entropy'].universe, [-1, 1, 2.5])
         self.metrics['subdomain_entropy']['medium'] = fuzz.trimf(self.metrics['subdomain_entropy'].universe, [2, 3.2, 4.5])
         self.metrics['subdomain_entropy']['high'] = fuzz.trapmf(self.metrics['subdomain_entropy'].universe, [4, 4.8, 6, 6])
 
-        self.metrics['query_frequency']['low'] = fuzz.trimf(self.metrics['query_frequency'].universe, [0, 50, 150])
+        self.metrics['query_frequency']['low'] = fuzz.trimf(self.metrics['query_frequency'].universe, [-1, 50, 150])
         self.metrics['query_frequency']['medium'] = fuzz.trimf(self.metrics['query_frequency'].universe, [100, 250, 400])
         self.metrics['query_frequency']['high'] = fuzz.trapmf(self.metrics['query_frequency'].universe, [350, 450, 500, 500])
 
-        self.metrics['unique_subdomains']['low'] = fuzz.trimf(self.metrics['unique_subdomains'].universe, [0, 50, 150])
+        self.metrics['unique_subdomains']['low'] = fuzz.trimf(self.metrics['unique_subdomains'].universe, [-1, 50, 150])
         self.metrics['unique_subdomains']['medium'] = fuzz.trimf(self.metrics['unique_subdomains'].universe, [100, 250, 400])
         self.metrics['unique_subdomains']['high'] = fuzz.trapmf(self.metrics['unique_subdomains'].universe, [350, 450, 500, 500])
         
-        self.metrics['digits']['low'] = fuzz.trimf(self.metrics['digits'].universe, [0, 1, 3])
+        self.metrics['digits']['low'] = fuzz.trimf(self.metrics['digits'].universe, [-1, 1, 3])
         self.metrics['digits']['medium'] = fuzz.trimf(self.metrics['digits'].universe, [2, 4, 5])
         self.metrics['digits']['high'] = fuzz.trapmf(self.metrics['digits'].universe, [4, 6, 10, 10])
         
@@ -178,7 +183,15 @@ class DNSTunnelDetector:
                 threat_level
             )
             self.rules.append(rule)
-
+        self.rules.extend([
+            ctrl.Rule(
+                self.metrics['avg_domain_len']['short'] & 
+                self.metrics['query_frequency']['low'] & 
+                self.metrics['subdomain_entropy']['low'] &
+                self.metrics['unique_subdomains']['low'] &
+                self.metrics['digits']['low'],
+                self.threat['low']
+            )])
         # Добавляем специальные правила для крайних случаев
         self.rules.extend([
             # Очень длинные домены с высокой энтропией - всегда опасны
@@ -250,7 +263,6 @@ class DNSTunnelDetector:
                 pkt_counter += 1
                 if pkt_counter > early_pkt_threshold:
                     cap.close()
-                    print('1')
                     return True  # слишком много DNS-пакетов — подозрение
 
                 qname = pkt.dns.qry_name.rstrip('.')
@@ -274,7 +286,6 @@ class DNSTunnelDetector:
         cap.close()
 
         if not timestamps:
-            print('2')
             return False  # Нет DNS-запросов
 
         suspicious_domains = 0
@@ -291,9 +302,75 @@ class DNSTunnelDetector:
 
         time_range = max(timestamps) - min(timestamps)
         freq = len(timestamps) / time_range if time_range > 0 else 0
-        print(f'3 {suspicious_domains=} {freq=} {max(timestamps)=} {min(timestamps)=} {len(timestamps)=} {time_range=}')
-        print(f'-----\n\n\n\n{timestamps}')
         return suspicious_domains > 0 or freq > freq_threshold
+    
+    def lightweight_dns_tunnel_check_v2(
+        self,
+        pcap_file,
+        length_threshold=50,
+        uniq_ratio_threshold=0.9,
+        freq_threshold=50,
+        early_pkt_threshold=500,
+        min_pkt_for_freq=20):
+        
+        cap = pyshark.FileCapture(pcap_file, display_filter="dns and dns.qry.name")
+
+        domain_counts = defaultdict(int)
+        subdomain_sets = defaultdict(set)
+        timestamps = []
+        pkt_counter = 0
+
+        for pkt in cap:
+            try:
+                pkt_counter += 1
+                if pkt_counter > early_pkt_threshold:
+                    cap.close()
+                    return True  # слишком много DNS-пакетов — подозрение
+
+                qname = pkt.dns.qry_name.rstrip('.')
+                labels = qname.split('.')
+                if len(labels) < 2:
+                    continue
+
+                domain = '.'.join(labels[-2:])  # example.com
+                subdomain = '.'.join(labels[:-2]) if len(labels) > 2 else ''
+
+                domain_counts[domain] += 1
+                if subdomain:
+                    subdomain_sets[domain].add(subdomain)
+
+                if hasattr(pkt, 'sniff_time'):
+                    timestamps.append(pkt.sniff_time.timestamp())
+
+            except AttributeError:
+                continue  # пропускаем пакеты без DNS-запроса
+
+        cap.close()
+
+        if not timestamps:
+            return False  # Нет DNS-запросов
+
+        suspicious_domains = 0
+        for domain, subs in subdomain_sets.items():
+            total = domain_counts[domain]
+            uniq = len(subs)
+            if total < 5:
+                continue
+            uniq_ratio = uniq / total
+            avg_sub_len = sum(len(s) for s in subs) / uniq if uniq else 0
+
+            if uniq_ratio > uniq_ratio_threshold and avg_sub_len > length_threshold:
+                suspicious_domains += 1
+
+        # Только если достаточно пакетов для надёжного анализа частоты
+        if len(timestamps) >= min_pkt_for_freq:
+            time_range = max(timestamps) - min(timestamps)
+            if time_range > 0:
+                freq = len(timestamps) / time_range
+                if freq > freq_threshold:
+                    return True
+
+        return suspicious_domains > 0
 
     def analyze_packet(self, pkt):
         try:
@@ -323,10 +400,9 @@ class DNSTunnelDetector:
         if not data['domains']:
             return None
 
-        print(f'----------\n{advanced_metrics=}')
         # Рассчитываем метрики для IP
         avg_len = np.mean(data['domain_lengths'])
-        entropy = self.calculate_entropy(data['subdomains']) / avg_len 
+        entropy = int(abs(self.calculate_entropy(data['subdomains']) / avg_len))
         
         # Частота запросов (запросов в минуту)
         time_diff = max(data['query_times']) - min(data['query_times'])
@@ -366,19 +442,20 @@ class DNSTunnelDetector:
                 continue
             self.sim.input[name] = value
             
-        try:
-            self.sim.compute()
-            threat = self.sim.output['threat_level']
-            
-            # Дополнительные проверки
-            if threat > 70 and avg_len < 60:
-                threat *= 0.7
-            
-            metrics['threat'] = min(threat, 100)
-            return metrics
-        except:
-            metrics['threat'] = 0.0
-            return metrics
+        # try:
+        self.sim.compute()
+
+        threat = self.sim.output['threat_level']
+        
+        # Дополнительные проверки
+        if threat > 70 and avg_len < 60:
+            threat *= 0.7
+        
+        metrics['threat'] = min(threat, 100)
+        return metrics
+        # except:
+            # metrics['threat'] = 0.0
+            # return metrics
 
     def analyze_cap(self, capture):
         # Сбор данных
@@ -391,12 +468,10 @@ class DNSTunnelDetector:
             metrics = self.evaluate_ip_threat(ip, dest)
             if metrics == None:
                 continue
-            print(f'{metrics=}')
+
             if metrics['threat'] > 0:  # Игнорируем IP без DNS-запросов
                 results.append(metrics)
         capture.close()
-        print('-------------')
-        print(results)
         
         return (DNS_TUN, NEED_REPORT, sorted(results, key=lambda x: x['threat'], reverse=True))
         # return dict(sorted(results.items(), key=lambda x: x[1], reverse=True))
@@ -506,7 +581,6 @@ class DNSTunnelDetector:
             
             # Дополнительные метрики
             adv_metrics = self._advanced_metrics(ip_data)
-            print(f'---\n{adv_metrics=}')
             # Базовые метрики
             base_metrics = self.evaluate_ip_threat(ip, dest, adv_metrics)
             if not base_metrics:
@@ -544,8 +618,8 @@ class DNSTunnelDetector:
         Метод для вызова из cron в заданное время
         Анализирует все файлы в специальной директории
         """
-        SPECIAL_DIR = "/home/alex/Coding/FuzzySystem/pcaps/dns/TEST_CRON/"  # Укажите вашу директорию
-        OUTPUT_FILE = "/home/alex/Coding/FuzzySystem/pcaps/dns/TEST_CRON/RES/dns_analysis_{date}.json"
+        SPECIAL_DIR = PCAP_DIR_ADV  # Укажите вашу директорию
+        OUTPUT_FILE = "{dir}dns_analysis_{date}.json"
         
         detector = DNSTunnelDetector(advanced=True)
         results = []
@@ -562,21 +636,32 @@ class DNSTunnelDetector:
                 # shutil.move(filepath, os.path.join(processed_dir, filename))
         
         # Сохраняем результаты
-        output_path = OUTPUT_FILE.format(date=datetime.now().strftime("%Y%m%d_%H%M"))
+        output_path = OUTPUT_FILE.format(dir=JSON_DIR, date=datetime.now().strftime("%Y%m%d_%H%M"))
         with open(output_path, 'w') as f:
             json.dump(results, f, indent=2)
             
         return output_path
+    
+    def print_rule_objects(self):
+        """Выводит техническую информацию о правилах"""
+        i = 0
+        for i, rule in enumerate(self.control_system.rules, 1):
+            print(f"\nRule object #{i}:")
+            print(f"Antecedent: {rule.antecedent}")
+            print(f"Consequent: {rule.consequent}")
+            if i > 10:
+                break
 
 # Пример использования
 if __name__ == "__main__":
-    # detector = DNSTunnelDetector()
+    detector = DNSTunnelDetector()
+    detector.print_rule_objects()
     
     # Опасный pcap
     # cap = pyshark.FileCapture('/home/alex/Coding/FuzzySystem/pcaps/dns-tunnel-iodine.pcap', display_filter='dns && dns.flags.response==0 && ip')
     # Безопасный pcap
-    cap = pyshark.FileCapture('/home/alex/Coding/FuzzySystem/pcaps/dns/benign_tun_01.pcap', display_filter='dns')
-    
+    cap = pyshark.FileCapture('/home/alex/Coding/FuzzySystem/pcaps/dns/attack_tun_01.pcap', display_filter='dns')
+
     # cap = pyshark.FileCapture('/home/alex/Coding/FuzzySystem/pcaps/dns_tunn.pcapng', display_filter='dns && dns.flags.response==0')
     # print(detector.analyze_cap(cap))
     ATTACK_DIR = "/home/alex/Coding/FuzzySystem/pcaps/dns/tunnel"
@@ -588,21 +673,19 @@ if __name__ == "__main__":
     
     # # print(onlyfiles)
     
-    for file in onlyfiles:
-        detector = DNSTunnelDetector()
-        print(file)
-        cap = pyshark.FileCapture(join(CUR_DIR, file), display_filter='dns && dns.flags.response==0 && ip')
-        res = detector.analyze_cap(cap)[2]
-        print(f'Оценка: {res}')
-        for m in res:
-            print(m)
-            if m['threat'] > 70:
-                print("Обнаружена потенциальная DNS-туннелизация!")
-            elif m['threat'] > 40:
-                print("Подозрительная активность")
-            else:
-                print("Трафик выглядит нормально")
-            print('\n\n\n')
+    # for file in onlyfiles:
+    #     detector = DNSTunnelDetector()
+    #     print(file)
+    #     cap = pyshark.FileCapture(join(CUR_DIR, file), display_filter='dns && dns.flags.response==0 && ip')
+    #     res = detector.analyze_cap(cap)[2]
+    #     print(f'Оценка: {res}')
+    #     for m in res:
+    #         print(m)
+    #         if m['threat'] > 70:
+    #             print("Обнаружена потенциальная DNS-туннелизация!")
+    #         elif m['threat'] > 40:
+    #             print("Подозрительная активность")
+    #         else:
+    #             print("Трафик выглядит нормально")
+    #         print('\n\n\n')
             
-            
-    

@@ -7,7 +7,7 @@ import pyshark
 from scapy.all import ARP, sniff
 import time
 from itertools import product
-from INFO import *
+from CONFIG_INFO import *
 
 DEBUG = True
 MAX_ARP_RESPONSES = 50
@@ -16,9 +16,15 @@ MAX_IP_CLAIMS = 3  # Максимальное количество разных 
 UNSOLICITED_THRESHOLD = 2.0  # 2 секунды для определения неожиданных ответов
 WHITELIST_IPS = {}  # {'192.168.1.1', '192.168.1.2'}
 
+DEFAULT_FILTER = "arp"
+
 class ARPSpoofingDetector:
     
     idx = 0
+    
+    @staticmethod
+    def get_filter():
+        return DEFAULT_FILTER
     
     def __init__(self):
         # Лингвистические переменные
@@ -35,11 +41,7 @@ class ARPSpoofingDetector:
         self.control_system = ctrl.ControlSystem(self.rules)
         self.simulation = ctrl.ControlSystemSimulation(self.control_system)
         
-        # self.threat_level.view_user()
-        # plt.ylabel('Величина принадлежности')
-        # plt.xlabel('Уровень угрозы')
-        # plt.title('Ф. п. для терма "уровень угрозы"')
-        # plt.show()
+        print('[ARPSpoofingDetector] is inited successfully')
 
     def _setup_membership(self):
         # ARP Responses
@@ -224,10 +226,7 @@ class ARPSpoofingDetector:
             # Вычисляем метрики
             metrics = self._calculate_metrics(stats, ip_conflicts, mac_change_count)
             threat = self._evaluate_threat(metrics)
-            print('\n------------------------------------\n')
-            # self.threat_level.view(sim=self.simulation)
-            # plt.plot()
-            print(f'THREAT: {threat}')
+
             results.append({
                 'mac': mac,
                 'threat': threat,
@@ -238,117 +237,25 @@ class ARPSpoofingDetector:
                 'stats': stats
             })
 
-        print(results)
         results = sorted(results, key=lambda x: x['threat'], reverse=True)
         
         danger_info = (ARP_SPOOF, NEED_REPORT, results)
         return danger_info
         
         # return sorted(results, key=lambda x: x['threat'], reverse=True)
-
-    def _calculate_metrics(self, stats, ip_conflicts, mac_change_count):
-        """Вычисление всех метрик с учетом изменений MAC"""
-        unsolicited_ratio = (stats['unsolicited'] / stats['responses']) * 100 if stats['responses'] > 0 else 0
         
-        # Уменьшаем вес одиночных изменений MAC
-        if mac_change_count == 1:
-            mac_change_count = 0.5
-            
-        # Комбинированный score
-        unsolicited_score = min(0.6 * unsolicited_ratio + 
-                            0.2 * stats['unsolicited'] + 
-                            0.2 * mac_change_count, 100)
-        
-        return {
-            'arp_responses': min(stats['responses'], MAX_ARP_RESPONSES),
-            'mac_changes': min(mac_change_count, MAX_MAC_CHANGES),
-            'unsolicited_score': unsolicited_score,
-            'ip_conflicts': min(ip_conflicts, MAX_IP_CLAIMS),
-            'is_gateway': any(ip.endswith('.1') for ip in stats['ip_claims'])
-        }
-
-    def _evaluate_threat(self, metrics):
-        """Оценка уровня угрозы с дополнительной логикой"""
+    def fast_arp_spoofing_check(self, cap, 
+                        max_arp_packets=1000, 
+                        max_unique_mac_ip_pairs=50, 
+                        max_conflicts=2, 
+                        sample_size=500):
         try:
-            self.simulation.input['arp_responses'] = metrics['arp_responses']
-            self.simulation.input['mac_changes'] = metrics['mac_changes']
-            self.simulation.input['unsolicited_score'] = metrics['unsolicited_score']
-            self.simulation.input['ip_conflicts'] = metrics['ip_conflicts']
-            
-            self.simulation.compute()
-            threat = self.simulation.output['threat_level']
-            self.arp_responses.view_user(sim=self.simulation)
-            plt.ylabel('Величина принадлежности')
-            plt.xlabel('Количество arp-ответов')
-            plt.title('Оценка для терма "количество arp-ответов"')
-            plt.show()
-            self.mac_changes.view_user(sim=self.simulation)
-            plt.ylabel('Величина принадлежности')
-            plt.xlabel('количество изменений mac')
-            plt.title('Оценка для терма "количество изменений mac"')
-            plt.show()
-            self.unsolicited_score.view_user(sim=self.simulation)
-            plt.ylabel('Величина принадлежности')
-            plt.xlabel('количество незапрошенных ответов')
-            plt.title('Оценка для терма "количество незапрошенных ответов"')
-            plt.show()
-            self.ip_conflicts.view_user(sim=self.simulation)
-            plt.ylabel('Величина принадлежности')
-            plt.xlabel('количество конфликтующих ip')
-            plt.title('Оценка для терма "количество конфликтующих ip"')
-            plt.show()
-            self.threat_level.view_user(sim=self.simulation)
-            plt.ylabel('Величина принадлежности')
-            plt.xlabel('Уровень угрозы')
-            plt.title('Оценка для терма "уровень угрозы"')
-            plt.show()
-            
-            # Дополнительные корректировки
-            if metrics['is_gateway']:
-                threat *= 0.8  # Снижаем угрозу для шлюза
-                
-            if metrics['ip_conflicts'] == 1 and metrics['unsolicited_score'] < 50:
-                threat *= 0.7  # Снижаем угрозу для единичных конфликтов
-                
-            return min(threat, 100)
-        except Exception as e:
-            if DEBUG:
-                print(f"Ошибка оценки угрозы: {e}")
-            return 0
-        
-    def save(self, info):
-        self.simulation.input['arp_responses'] = info['metrics']['arp_responses']
-        self.simulation.input['mac_changes'] = info['metrics']['mac_changes']
-        self.simulation.input['unsolicited_score'] = info['metrics']['unsolicited_score']
-        self.simulation.input['ip_conflicts'] = info['metrics']['ip_conflicts']
-        
-        self.simulation.compute()
-        self.threat_level.view_user(sim=self.simulation)
-        plt.title('Результат распознавания потенциального\nARP-spoofing')
-        plt.xlabel('Уровень потенциального ARP-spoofing')
-        plt.ylabel('Функция принадлежности')
-        plt.legend(['Низкий', 'Средний', 'Высокий'], loc='upper left')
-        
-        path = f'/home/alex/Coding/FuzzySystem/reports/images/fuzzy_danger_level_arp_spoof_{ARPSpoofingDetector.idx}.png'
-        
-        plt.savefig(path, dpi=300, bbox_inches='tight')
-        
-        ARPSpoofingDetector.idx += 1
-        
-        return path
-    
-    def lightweight_arp_spoofing_check(self, cap_fd, 
-                            max_arp_packets=1000, 
-                            max_unique_mac_ip_pairs=50, 
-                            max_conflicts=3, 
-                            sample_size=500):
-        try:
-            cap = pyshark.FileCapture(
-                input_file=cap_fd,
-                display_filter='arp',
-                only_summaries=True,  # Быстрее, так как не загружаем полные пакеты
-                keep_packets=False    # Не хранить пакеты в памяти для экономии
-            )
+            # cap = pyshark.FileCapture(
+            #     input_file=cap_fd,
+            #     display_filter='arp',
+            #     only_summaries=True,  # Быстрее, так как не загружаем полные пакеты
+            #     keep_packets=False    # Не хранить пакеты в памяти для экономии
+            # )
             
             ip_to_mac = defaultdict(set)
             unique_pairs = set()
@@ -356,9 +263,8 @@ class ARPSpoofingDetector:
             conflicts_detected = 0
             
             for pkt in cap:
-                if not hasattr(pkt, 'arp') or not hasattr(pkt, 'eth'):
+                if not hasattr(pkt, 'arp'):
                     continue
-                    
                 arp_count += 1
                 
                 src_ip = pkt.arp.src_proto_ipv4
@@ -393,15 +299,90 @@ class ARPSpoofingDetector:
             print(f"Error analyzing pcap: {e}")
             return False
 
+    def _calculate_metrics(self, stats, ip_conflicts, mac_change_count):
+        """Вычисление всех метрик с учетом изменений MAC"""
+        unsolicited_ratio = (stats['unsolicited'] / stats['responses']) * 100 if stats['responses'] > 0 else 0
+        
+        # Уменьшаем вес одиночных изменений MAC
+        if mac_change_count == 1:
+            mac_change_count = 0.5
+            
+        # Комбинированный score
+        unsolicited_score = min(0.6 * unsolicited_ratio + 
+                            0.2 * stats['unsolicited'] + 
+                            0.2 * mac_change_count, 100)
+        
+        return {
+            'arp_responses': min(stats['responses'], MAX_ARP_RESPONSES),
+            'mac_changes': min(mac_change_count, MAX_MAC_CHANGES),
+            'unsolicited_score': unsolicited_score,
+            'ip_conflicts': min(ip_conflicts, MAX_IP_CLAIMS),
+            'is_gateway': any(ip.endswith('.1') for ip in stats['ip_claims'])
+        }
+
+    def _evaluate_threat(self, metrics):
+        """Оценка уровня угрозы с дополнительной логикой"""
+        try:
+            self.simulation.input['arp_responses'] = metrics['arp_responses']
+            self.simulation.input['mac_changes'] = metrics['mac_changes']
+            self.simulation.input['unsolicited_score'] = metrics['unsolicited_score']
+            self.simulation.input['ip_conflicts'] = metrics['ip_conflicts']
+            
+            self.simulation.compute()
+            threat = self.simulation.output['threat_level']
+            
+            # Дополнительные корректировки
+            if metrics['is_gateway']:
+                threat *= 0.8  # Снижаем угрозу для шлюза
+                
+            if metrics['ip_conflicts'] == 1 and metrics['unsolicited_score'] < 50:
+                threat *= 0.7  # Снижаем угрозу для единичных конфликтов
+                
+            return min(threat, 100)
+        except Exception as e:
+            if DEBUG:
+                print(f"Ошибка оценки угрозы: {e}")
+            return 0
+        
+    def save(self, info):
+        self.simulation.input['arp_responses'] = info['metrics']['arp_responses']
+        self.simulation.input['mac_changes'] = info['metrics']['mac_changes']
+        self.simulation.input['unsolicited_score'] = info['metrics']['unsolicited_score']
+        self.simulation.input['ip_conflicts'] = info['metrics']['ip_conflicts']
+        
+        self.simulation.compute()
+        self.threat_level.view_user(sim=self.simulation)
+        plt.title('Результат распознавания потенциального\nARP-spoofing')
+        plt.xlabel('Уровень потенциального ARP-spoofing')
+        plt.ylabel('Функция принадлежности')
+        plt.legend(['Низкий', 'Средний', 'Высокий'], loc='upper left')
+        
+        path = f'{REPORT_IMAGES_DIR}fuzzy_danger_level_arp_spoof_{ARPSpoofingDetector.idx}.png'
+        
+        plt.savefig(path, dpi=300, bbox_inches='tight')
+        
+        ARPSpoofingDetector.idx += 1
+        
+        return path
+    
+    def print_rule_objects(self):
+        """Выводит техническую информацию о правилах"""
+        for i, rule in enumerate(self.control_system.rules, 1):
+            print(f"\nRule object #{i}:")
+            print(f"Antecedent: {rule.antecedent}")
+            print(f"Consequent: {rule.consequent}")
+
 
 if __name__ == "__main__":
     detector = ARPSpoofingDetector()
+    
+    detector.print_rule_objects()
     
     # Пример 1: Анализ PCAP файла
     if DEBUG:
         print("[*] Analyzing pcap file...")
         # /home/alex/Coding/FuzzySystem/pcaps/arp-spoofing.pcapng
-        cap = pyshark.FileCapture("/home/alex/Coding/FuzzySystem/pcaps/arp-spoofing.pcapng", display_filter="arp")
+        cap = pyshark.FileCapture(f"{CAP_DIR}arp-spoofing.pcapng", display_filter="arp")
         # cap = pyshark.FileCapture("/home/alex/Coding/FuzzySystem/pcaps/arp-spoof/normal.pcapng", display_filter="arp")
         results = detector.analyze_cap(cap)[2]
         

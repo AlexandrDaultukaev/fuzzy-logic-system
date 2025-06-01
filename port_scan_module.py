@@ -5,7 +5,7 @@ import skfuzzy as fuzz
 from skfuzzy import interp_membership
 from skfuzzy import control as ctrl
 from rule_maker import RuleMaker
-from INFO import *
+from CONFIG_INFO import *
 from collections import defaultdict
 import pyshark
 import asyncio
@@ -38,7 +38,7 @@ MAX_SPEED = 300
 #     Средняя (Medium) – умеренная скорость (10–100 пакетов/сек).
 #     Высокая (High) – очень быстрая отправка (>100 пакетов/сек).
 
-# ----- Углубленная проверка TODO-----
+# ----- Углубленная проверка -----
 # Количество ответов RST (ответ хоста о том, что порт закрыт attacker <-- host)
 #     Низкое (Low) – небольшое количество портов (например, 1–10).
 #     Среднее (Medium) – умеренное количество (10–100).
@@ -97,7 +97,7 @@ def get_danger_term_from_ruler(packets_term, ports_term, speed_term):
     i += 1
     return rule
 
-class PortScan:
+class PortScanDetector:
     
     idx = 0
     
@@ -136,6 +136,8 @@ class PortScan:
         
         self.danger_ctrl = ctrl.ControlSystem(rules)
         self.danger_sim = ctrl.ControlSystemSimulation(self.danger_ctrl)
+        
+        print('[PortScanDetector] is inited successfully')
     
     @staticmethod
     def get_filter():
@@ -170,29 +172,32 @@ class PortScan:
                     else:
                        src_set.add(packet.ip.src)
                        ip_map[packet.ip.src] = 1
-            print(f'[DEBUG]: \n-------\nnum: {packet_num}\nid: {packet.ip.id}\n{ip_map}\n{src_set}\n{rst_counter}\n-------\n')
-            # if i == 3:
-            #     exit(1)
-            # else:
-            #     i+=1
         
         # Если есть много различных src ip адресов с SYN, то вероятно, это распределенное сканирование
         if packet_num > 100 and packet_num // DELIMETER <= len(src_set):
             return True    
         
-        print(f'RET FALSE {packet_num // DELIMETER}, {len(src_set)}')
         return False
         
+    
+    # TODO ЕСЛИ L2, то не надо анализировать
     def analyze_cap(self, cap):
+        # path = '/home/alex/Coding/FuzzySystem/pcaps/dns/solo_dns.pcapng'
+        # cap = pyshark.FileCapture(path, keep_packets=False)#, display_filter=DEFAULT_FILTER)
         
         packets_count = defaultdict(int)
         packets_count_extra = defaultdict(int)
         time = 0
-
+        # return 0
+        # cap.load_packets()
+        # packet_amount = len(cap)
+        # print(packet_amount)
         try:
             for packet in cap:
                 if packet.tcp.flags.hex_value & RST:
                     continue
+                # print(packet)
+            # ------ Формируем количество пакетов от одного хоста за определенное время ------
                 time = round(float(packet.frame_info.time_relative))
                 src_ip = packet.ip.src
                 ports_set = set()
@@ -201,24 +206,34 @@ class PortScan:
                     
                 # Не проверяем отсутствующее значение, потому что defaultdict
                 packets_count[src_ip] += 1
+            # --------------------------------------------------------------------------------
+            # ------ Формируем количество запрошенных уникальных портов ----------------------
                 ports_set.add(packet.tcp.dstport)
                 packets_count_extra[src_ip] = (packets_count[src_ip], time, ports_set)
 
+            
+            
+            # --------------------------------------------------------------------------------
+                
+            # ------ Проверяем на лимит ------------------------------------------------------
                 if packets_count[src_ip] // int(time + 1) == PACKETS_PER_SECOND_LIMIT:
                     # Досрочное окончание проверки на сканирование
                     # Из-за достаточных данных, позволяющих судить о сканировании
                     # Если количество пакетов в одну секунду > 100, то высока вероятность сканирования
                     print(f'[DEBUG]: limit has reached! {packets_count[src_ip]} for {src_ip}')
                     break
+            # --------------------------------------------------------------------------------
+                # if DEBUG:
+                #     print(packets_count)
+                #     print(ports_set)
+                #     print(packet.ip.dst)          # Убедитесь, что только 192.168.56.101
+                #     print(f'{packet.tcp.srcport} -> {packet.tcp.dstport}')
         except Exception as e:
             print(f"Error in packet iteration: {e}")
         
         danger = 0
         max_danger_info = (PORT_SCAN, danger, None, 0, 0, 0)
         for ip, count_time_ports in packets_count_extra.items():
-            if DEBUG:
-                print(f'[DEBUG]: extra {ip} and {count_time_ports}')
-                print(f'{count=}, {speed=}, {ports=}')
             count = count_time_ports[0]
             time = count_time_ports[1]
             ports = len(count_time_ports[2])
@@ -233,7 +248,6 @@ class PortScan:
             if danger > DANGER_THRESHOLD:
                 cap.close()
                 return (PORT_SCAN, NEED_REPORT, max_danger_info)
-            print(f"LEVEL {danger}")
             
         
         cap.close()
@@ -253,9 +267,9 @@ class PortScan:
         return self.danger_sim.output['level of potential threat']
     
     def save(self, info):
-        self.danger_sim.input['number of packets from one IP, in hundreds'] = info[2] #min(info[2], MAX_PACKETS)
-        self.danger_sim.input['number of unique ports'] = info[3] #min(info[3], MAX_PORTS)
-        self.danger_sim.input['speed packets per sec'] = info[4] #min(info[4], MAX_SPEED)
+        self.danger_sim.input['number of packets from one IP, in hundreds'] = info[2]
+        self.danger_sim.input['number of unique ports'] = info[3]
+        self.danger_sim.input['speed packets per sec'] = info[4]
         self.danger_sim.compute()
         self.danger.view_user(sim=self.danger_sim)
         plt.title('Результат распознавания потенциального\nсканирования')
@@ -263,11 +277,11 @@ class PortScan:
         plt.ylabel('Функция принадлежности')
         plt.legend(['Низкий', 'Средний', 'Высокий', 'Критический'], loc='upper left')
         
-        path = f'/home/alex/Coding/FuzzySystem/reports/images/fuzzy_danger_level_port_scan_{PortScan.idx}.png'
+        path = f'/home/alex/Coding/FuzzySystem/reports/images/fuzzy_danger_level_port_scan_{PortScanDetector.idx}.png'
         
         plt.savefig(path, dpi=300, bbox_inches='tight')
         
-        PortScan.idx += 1
+        PortScanDetector.idx += 1
         
         return path
 
@@ -290,18 +304,24 @@ class PortScan:
 #
 
 if __name__ == "__main__":    
+    ps = PortScanDetector()
+    # ps.packets.view()
+    # plt.show()
+
     
     CUR_DIR = '/home/alex/Coding/FuzzySystem/pcaps/port_scan/'
     
     onlyfiles = [f for f in listdir(CUR_DIR)]
     for file in onlyfiles:
-        ps = PortScan()
-        print(file)
+        ps = PortScanDetector()
+        # cap = pyshark.FileCapture("/home/alex/Coding/FuzzySystem/pcaps/port_scan/SU Scan.pcapng", display_filter="tcp")
         cap = pyshark.FileCapture(join(CUR_DIR, file), display_filter='tcp')
         results = ps.analyze_cap(cap)[2][0]
-        print(results)
         exit(1)
     
-
+        
+    
+    # print(ps.get_result(200, 15, 15))
     ps.view()
+    # ps.analyze_cap("f")
     

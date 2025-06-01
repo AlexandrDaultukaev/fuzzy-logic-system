@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 from jinja2 import Template
-from INFO import *
+from CONFIG_INFO import *
 
 class ReportGenerator():
     
@@ -145,7 +145,7 @@ class ReportGenerator():
         )
 
         # Сохранение отчета
-        path_report = f"/home/alex/Coding/FuzzySystem/reports/dns_tunnel_report_{ReportGenerator.idx}.html"
+        path_report = f"{REPORT_DIR}dns_tunnel_report_{ReportGenerator.idx}.html"
         with open(path_report, "w", encoding="utf-8") as f:
             f.write(html_report)
         
@@ -228,7 +228,7 @@ class ReportGenerator():
         )
 
         # 4. Сохраняем отчет
-        path_report = f"/home/alex/Coding/FuzzySystem/reports/arp_spoof_report_{ReportGenerator.idx}.html"
+        path_report = f"{REPORT_DIR}arp_spoof_report_{ReportGenerator.idx}.html"
         with open(path_report, "w", encoding="utf-8") as f:
             f.write(html_report)
         
@@ -290,7 +290,7 @@ class ReportGenerator():
         )
 
         # 5. Сохраняем отчет
-        path_report = f"/home/alex/Coding/FuzzySystem/reports/port_scan_report_{ReportGenerator.idx}.html"
+        path_report = f"{REPORT_DIR}port_scan_report_{ReportGenerator.idx}.html"
         with open(path_report, "w", encoding="utf-8") as f:
             f.write(html_report)
         
@@ -302,7 +302,7 @@ class ReportGenerator():
     def generate_report(tag, info, path):
         
         if tag == PORT_SCAN:
-            info = [info] # TODO FOR DEEP ANALYZE
+            info = [info] # TODO реализовать получение списка аномальных записей
             ReportGenerator.gen_port_scan(info, path)
         
         if tag == ARP_SPOOF:

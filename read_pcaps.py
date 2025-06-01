@@ -4,13 +4,15 @@ if sys.version_info >= (3, 12, 0):
     sys.modules['kafka.vendor.six.moves'] = six.moves
 from kafka import KafkaConsumer
 
+from CONFIG_INFO import *
+
 class PcapReciever:
     
     def __init__(self, broker, topic):
         self.kafka_broker = broker
         self.topic = topic
         self.idx = 0
-        self.prefix = '/home/alex/Coding/FuzzySystem/received_pcaps/data_'
+        self.prefix = f'{CAP_DIR}data_'
         self.postfix = '.pcapng'
         # Инициализация Kafka Consumer
         self.consumer = KafkaConsumer(

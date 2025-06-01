@@ -7,7 +7,9 @@ CPU_COUNT = multiprocessing.cpu_count() # 16
 class ThreadPoolManager:
     
     def __init__(self):
-        self.executor = ThreadPoolExecutor(max_workers=CPU_COUNT)
+        self.executor = ThreadPoolExecutor(max_workers=CPU_COUNT//3)
+        
+        print(f'[ThreadPoolManager] is inited successfully (CPU_COUNT: {CPU_COUNT//3})')
         
     def __del__(self):
         self.executor.shutdown()
