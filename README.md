@@ -39,5 +39,7 @@
 Отчет сохранен: /home/user/reports/arp_spoof_report_0.html
 ```
 
+![image](https://github.com/user-attachments/assets/51215a1e-fab0-4a7d-824c-527bd4ceb516)
+
 
 
